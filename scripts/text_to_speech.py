@@ -12,6 +12,7 @@ from unitspeech.text import cleaned_text_to_sequence, phonemize, symbols
 from unitspeech.util import HParams, intersperse, fix_len_compatibility, sequence_mask, generate_path
 from unitspeech.vocoder.env import AttrDict
 from unitspeech.vocoder.models import BigVGAN
+from unitspeech.vocoder.stft import STFT
 
 
 @torch.no_grad()
@@ -81,10 +82,12 @@ def main(args, hps):
     _ = unitspeech.cuda().train()
 
     # Initialize & load vocoder.
-    with open(hps.train.vocoder_config_path) as f:
-        h = AttrDict(json.load(f))
-    vocoder = BigVGAN(h)
-    vocoder.load_state_dict(torch.load(hps.train.vocoder_ckpt_path, map_location=lambda loc, storage: loc)['generator'])
+    # with open(hps.train.vocoder_config_path) as f:
+    #     h = AttrDict(json.load(f))
+    # vocoder = BigVGAN(h)
+    # vocoder.load_state_dict(torch.load(hps.train.vocoder_ckpt_path, map_location=lambda loc, storage: loc)['generator'])
+    stft = STFT(filter_length=16, hop_length=4, win_length=16).cuda()
+    vocoder = torch.jit.load(args.vocoder_checkpoint, map_location='cuda')
     _ = vocoder.cuda().eval()
     vocoder.remove_weight_norm()
 
@@ -109,7 +112,11 @@ def main(args, hps):
 
         mel_generated = ((mel_generated + 1) / 2 * (mel_max.to(mel_generated.device) - mel_min.to(mel_generated.device))
                          + mel_min.to(mel_generated.device))
-        audio_generated = vocoder.forward(mel_generated).cpu().squeeze().clamp(-1, 1).numpy()
+
+        spec, phase = vocoder(mel_generated)  # mel ---> batch, num_mels, frames [1, 80, 234]
+        y_g_hat = stft.inverse(spec, phase)
+        audio_generated = y_g_hat.cpu().squeeze().clamp(-1, 1).numpy()
+        # audio_generated = vocoder.forward(mel_generated).cpu().squeeze().clamp(-1, 1).numpy()
 
     if "/" in args.generated_sample_path:
         os.makedirs(os.path.dirname(args.generated_sample_path), exist_ok=True)
@@ -139,6 +146,8 @@ if __name__ == "__main__":
                         help='The parameter for adjusting speech speed. The smaller it is compared to 1, the faster the speech becomes.')
     parser.add_argument('--diffusion_step', type=int, default=50,
                         help='The number of iterations for sampling in the diffusion model.')
+    parser.add_argument('--vocoder_checkpoint', type=str, default="unitspeech/checkpoints/istft_chkpt.pt",
+                        help='Path of the iSTFT checkpoint.')                    
     args = parser.parse_args()
 
     with open(args.config_path, "r") as f:
