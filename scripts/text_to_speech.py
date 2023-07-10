@@ -89,7 +89,6 @@ def main(args, hps):
     stft = STFT(filter_length=16, hop_length=4, win_length=16).cuda()
     vocoder = torch.jit.load(args.vocoder_checkpoint, map_location='cuda')
     _ = vocoder.cuda().eval()
-    vocoder.remove_weight_norm()
 
     # Prepare input
     phoneme = phonemize(args.text, global_phonemizer)
